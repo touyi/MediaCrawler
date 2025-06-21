@@ -478,7 +478,6 @@ class XiaoHongShuClient(AbstractApiClient):
             "image_formats": "jpg,webp,avif",
         }
         return await self.get(uri, data)
-
     async def get_all_notes_by_creator(
         self,
         user_id: str,

@@ -23,6 +23,9 @@ import urllib.parse
 from io import BytesIO
 from typing import Dict, List, Optional, Tuple
 
+import matplotlib.pyplot as plt
+from matplotlib.image import imread
+
 import httpx
 from PIL import Image, ImageDraw
 from playwright.async_api import Cookie, Page
@@ -82,6 +85,7 @@ def show_qrcode(qr_code) -> None:  # type: ignore
     qr_code = base64.b64decode(qr_code)
     image = Image.open(BytesIO(qr_code))
 
+
     # Add a square border around the QR code and display it within the border to improve scanning accuracy.
     width, height = image.size
     new_image = Image.new('RGB', (width + 20, height + 20), color=(255, 255, 255))
@@ -89,6 +93,11 @@ def show_qrcode(qr_code) -> None:  # type: ignore
     draw = ImageDraw.Draw(new_image)
     draw.rectangle((0, 0, width + 19, height + 19), outline=(0, 0, 0), width=1)
     new_image.show()
+
+    # image = imread(BytesIO(qr_code))
+    # plt.imshow(image)
+    # plt.axis('off')
+    # plt.show()
 
 
 def get_user_agent() -> str:

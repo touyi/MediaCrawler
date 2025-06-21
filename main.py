@@ -55,6 +55,9 @@ async def main():
     crawler = CrawlerFactory.create_crawler(platform=config.PLATFORM)
     await crawler.start()
 
+    # import matplotlib.pyplot as plt
+    # plt.close('all')
+
     if config.SAVE_DATA_OPTION == "db":
         await db.close()
 

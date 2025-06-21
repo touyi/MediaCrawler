@@ -102,7 +102,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
                 await self.get_specified_notes()
             elif config.CRAWLER_TYPE == "creator":
                 # Get creator's information and their notes and comments
-                await self.get_creators_and_notes()
+                await self.get_creators_and_notes_limit_timestamp(config.MIN_TIMESTAMP)
             else:
                 pass
 
@@ -205,9 +205,77 @@ class XiaoHongShuCrawler(AbstractCrawler):
             all_notes_list = await self.xhs_client.get_all_notes_by_creator(
                 user_id=user_id,
                 crawl_interval=crawl_interval,
-                callback=self.fetch_creator_notes_detail,
+                callback=self.fetch_creator_notes_detail_and_store,
             )
 
+            note_ids = []
+            xsec_tokens = []
+            for note_item in all_notes_list:
+                note_ids.append(note_item.get("note_id"))
+                xsec_tokens.append(note_item.get("xsec_token"))
+            await self.batch_get_note_comments(note_ids, xsec_tokens)
+    
+    async def get_creators_and_notes_limit_timestamp(self, min_timestamp = 0):
+        """Get creator's notes and retrieve their comment information."""
+        utils.logger.info(
+            "[XiaoHongShuCrawler.get_creators_and_notes_limit_timestamp] Begin get xiaohongshu creators"
+        )
+        for user_id in config.XHS_CREATOR_ID_LIST:
+            # get creator detail info from web html content
+            createor_info: Dict = await self.xhs_client.get_creator_info(
+                user_id=user_id
+            )
+            if createor_info:
+                await xhs_store.save_creator(user_id, creator=createor_info)
+
+            # When proxy is not enabled, increase the crawling interval
+            if config.ENABLE_IP_PROXY:
+                crawl_interval = random.random()
+            else:
+                crawl_interval = random.uniform(1, config.CRAWLER_MAX_SLEEP_SEC)
+            # Get all note information of the creator
+            all_notes_list = []
+            notes_has_more = True
+            notes_cursor = ""
+            while notes_has_more and len(all_notes_list) < config.CRAWLER_MAX_NOTES_COUNT:
+                notes_res = await self.xhs_client.get_notes_by_creator(user_id, notes_cursor)
+                if not notes_res:
+                    utils.logger.error(
+                        f"[XiaoHongShuClient.get_creators_and_notes_limit_timestamp] The current creator may have been banned by xhs, so they cannot access the data."
+                    )
+                    break
+
+                notes_has_more = notes_res.get("has_more", False)
+                notes_cursor = notes_res.get("cursor", "")
+                if "notes" not in notes_res:
+                    utils.logger.info(
+                        f"[XiaoHongShuClient.get_creators_and_notes_limit_timestamp] No 'notes' key found in response: {notes_res}"
+                    )
+                    break
+
+                notes = notes_res["notes"]
+                utils.logger.info(
+                    f"[XiaoHongShuClient.get_creators_and_notes_limit_timestamp] got user_id:{user_id} notes len : {len(notes)}"
+                )
+
+                remaining = config.CRAWLER_MAX_NOTES_COUNT - len(all_notes_list)
+                if remaining <= 0:
+                    break
+
+                notes_to_add = notes[:remaining]
+                note_details = await self.fetch_creator_notes_detail(notes_to_add)
+                for index in range(len(note_details)):
+                    if 'time' in note_details[index] and note_details[index]['time'] < min_timestamp * 1000:
+                        notes_has_more = False
+                        break
+                    else:
+                        await xhs_store.update_xhs_note(note_details[index])
+                        all_notes_list.append(note_details[index])
+                await asyncio.sleep(crawl_interval)
+
+            utils.logger.info(
+                f"[XiaoHongShuClient.get_creators_and_notes_limit_timestamp] Finished getting notes for user {user_id}, total: {len(all_notes_list)}"
+            )
             note_ids = []
             xsec_tokens = []
             for note_item in all_notes_list:
@@ -230,7 +298,13 @@ class XiaoHongShuCrawler(AbstractCrawler):
             for post_item in note_list
         ]
 
-        note_details = await asyncio.gather(*task_list)
+        return await asyncio.gather(*task_list)
+
+    async def fetch_creator_notes_detail_and_store(self, note_list: List[Dict]):
+        """
+        Concurrently obtain the specified post list and save the data
+        """
+        note_details = await self.fetch_creator_notes_detail(note_list)
         for note_detail in note_details:
             if note_detail:
                 await xhs_store.update_xhs_note(note_detail)
